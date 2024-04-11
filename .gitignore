@@ -1,0 +1,11 @@
+build
+err.o
+CMakeLists.txt
+common.o
+server.o
+server
+client.o
+client
+cmake_install.cmake
+CMakeCache.txt
+.vscode
