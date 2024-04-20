@@ -96,6 +96,37 @@ ssize_t writen(int fd, const void *vptr, size_t n){
     return n;
 }
 
+void set_timeout(int fd, int sec, int usec) {
+    struct timeval tv;
+    tv.tv_sec = sec;
+    tv.tv_usec = usec;
+    if (setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0) {
+        syserr("setsockopt");
+    }
+    if(setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv)) < 0){
+        syserr("setsockopt");
+    }
+}
+
+int create_bind_udp(uint16_t port) {
+    // Create a socket.
+    int socket_fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (socket_fd < 0) {
+        syserr("cannot create a socket");
+    }
+
+    // Bind the socket to a concrete address.
+    struct sockaddr_in client_address;
+    client_address.sin_family = AF_INET;
+    client_address.sin_addr.s_addr = htonl(INADDR_ANY);
+    client_address.sin_port = htons(port);
+    if (bind(socket_fd, (struct sockaddr *) &client_address, sizeof(client_address)) < 0) {
+        syserr("bind");
+    }
+
+    return socket_fd;
+}
+
 int send_conn_tcp(int fd, uint64_t session_id, uint8_t protocol, uint64_t length) {
     conn c = {1, session_id, protocol, htobe64(length)};
     return writen(fd, &c, sizeof(c));
@@ -221,6 +252,17 @@ int send_rcvd_udp(int fd, uint64_t session_id, struct sockaddr_in *client_addres
     return 0;
 }
 
+int send_acc_udp(int fd, uint64_t session_id, uint64_t packet_number, struct sockaddr_in *client_address){
+    acc a = {5, session_id, htobe64(packet_number)};
+    int flags = 0;
+    ssize_t sent;
+    sent = sendto(fd, &a, sizeof(a), flags, (struct sockaddr *) client_address, sizeof(*client_address));
+    if(sent < 0){
+        syserr("sendto");
+    }
+    return 0;
+}
+
 /* this function DOES NOT CHANGE BYTES ORDER */
 int receive_datagram_udp(int fd, struct sockaddr_in *client_address,
                          void *buffer,ssize_t buffer_len,  uint8_t* type, uint64_t* session_id, socklen_t* addr_len){
@@ -228,8 +270,11 @@ int receive_datagram_udp(int fd, struct sockaddr_in *client_address,
     int flags = 0;
     received = recvfrom(fd, buffer, buffer_len, flags, 
                         (struct sockaddr *) client_address, addr_len);   
-    if(received < 0){
+    if(received < 0 && errno != EAGAIN && errno != EWOULDBLOCK){
         syserr("recvfrom");
+    }
+    else if(received == 0){ // errno == EAGAIN || errno == EWOULDBLOCK this means timeout
+        return -1;
     }
     *type = ((uint8_t*) buffer)[0];
     *session_id = *((uint64_t *) (buffer + 1));

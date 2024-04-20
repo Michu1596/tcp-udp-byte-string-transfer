@@ -18,6 +18,46 @@
 #define BUFFER_SIZE 100000
 uint8_t buffer[BUFFER_SIZE];
 
+
+int udp_set_session(int socket_fd, int port, session_info *session, struct sockaddr_in *client_address){
+        // reset timeouts
+        set_timeout(socket_fd, 0, 0);
+
+        // Start PPCB session
+        printf("server is waiting for CONN at port %d\n", port);
+        
+        socklen_t client_address_len = (socklen_t) sizeof(*client_address);
+
+        // receive CONN
+        conn conn_package;
+        ssize_t recived_length;
+        do{
+            recived_length = recvfrom(socket_fd, &conn_package,
+                                    sizeof(conn_package), 0, (struct sockaddr *) client_address, &client_address_len);
+            if(recived_length < 0){
+                syserr("recvfrom");
+            }
+            printf("server recivied data from addresss %s:%d\n",
+             inet_ntoa(client_address->sin_addr), ntohs(client_address->sin_port));
+        } while(recived_length != sizeof(conn) && conn_package.type != 1 
+            && conn_package.protocol_id != 2 && conn_package.protocol_id != 3); // trying till success
+    
+
+        // set session
+        session->session_id = conn_package.session_id;
+        session->protocol = conn_package.protocol_id;
+        session->length = be64toh(conn_package.length); // TODO check if it is correct
+        session->packet_number = 0;
+
+        printf("received session info: session_id = %" PRIu64 ", protocol = %" PRIu8 ", packet_number = %" PRIu64 "\n",
+               session->session_id, session->protocol, session->packet_number);
+
+        // send CONNACC
+        send_connacc_udp(socket_fd, session->session_id, client_address);
+        return 0;
+}
+
+
 void tcp_protocl(int port){
 
     // Ignore SIGPIPE signals, so they are delivered as normal errors.
@@ -128,62 +168,18 @@ void tcp_protocl(int port){
 }
 
 void udp_protocol(int port){
-    int socket_fd = socket(AF_INET, SOCK_DGRAM, 0); // see man:socket(2)
-    if (socket_fd < 0) {
-        syserr("cannot create a socket");
-    }
-
-    // Bind the socket to a concrete address.
-    struct sockaddr_in server_address;
-    server_address.sin_family = AF_INET; // IPv4 for IPv6 use AF_INET6
-    server_address.sin_addr.s_addr = htonl(INADDR_ANY); // listening on all interfaces
-    server_address.sin_port = htons(port); // listening on port PORT_NUM
-
-    if(0 > bind(socket_fd, (struct sockaddr *) &server_address, sizeof(server_address))){
-        syserr("bind");
-    }
+    int socket_fd = create_bind_udp(port);
 
     for(;;){
-        // reset timeouts
-        struct timeval to = {.tv_sec = 0, .tv_usec = 0};
-        setsockopt(socket_fd, SOL_SOCKET, SO_RCVTIMEO, &to, sizeof to);
-        setsockopt(socket_fd, SOL_SOCKET, SO_SNDTIMEO, &to, sizeof to); // possibly not needed
-
-        // Start PPCB session
-        printf("server is waiting for CONN at port %d\n", port);
-        
+        // set PCCB session
         struct sockaddr_in client_address;
-        socklen_t client_address_len = (socklen_t) sizeof(client_address);
-
-        // receive CONN
-        conn conn_package;
-        ssize_t recived_length;
-        do{
-            recived_length = recvfrom(socket_fd, &conn_package,
-                                    sizeof(conn_package), 0, (struct sockaddr *) &client_address, &client_address_len);
-            if(recived_length < 0){
-                syserr("recvfrom");
-            }
-        } while(recived_length != sizeof(conn)); // trying till success
-
-        // set session info
         session_info session;
-        session.session_id = conn_package.session_id;
-        session.protocol = UDP;
+        session.protocol = 2;
         session.packet_number = 0;
-        session.length = be64toh(conn_package.length);
-
-        printf("received session info: session_id = %" PRIu64 ", protocol = %" PRIu8 ", packet_number = %" PRIu64 "\n",
-               session.session_id, session.protocol, session.packet_number);
-
-        // send CONNACC
-        send_connacc_udp(socket_fd, session.session_id, &client_address);
+        udp_set_session(socket_fd, port, &session, &client_address);
 
         // set timeouts
-        to.tv_sec = MAX_WAIT;
-        to.tv_usec = 0;
-        setsockopt(socket_fd, SOL_SOCKET, SO_RCVTIMEO, &to, sizeof to);
-        setsockopt(socket_fd, SOL_SOCKET, SO_SNDTIMEO, &to, sizeof to); // possibly not needed
+        set_timeout(socket_fd, MAX_WAIT, 0);
 
         // receive data
         uint64_t bytes_left = session.length;
@@ -199,7 +195,8 @@ void udp_protocol(int port){
                 data_header *header = (data_header *) buffer;
                 header->packet_number = be64toh(header->packet_number);
                 header->length = be32toh(header->length);
-                printf("received data: packet_number = %" PRIu64 ", length = %" PRIu32 "\n", header->packet_number, header->length);
+                printf("received data: packet_number = %" PRIu64 ", length = %" PRIu32 "\n",
+                     header->packet_number, header->length);
 
                 if(header->packet_number == session.packet_number){
                     // print to std out
@@ -224,6 +221,82 @@ void udp_protocol(int port){
     }
     close(socket_fd);
 }
+int udpr_protocol(int port){
+    int socket_fd = create_bind_udp(port);
+
+    // client service
+    for(;;){
+        // set PCCB session
+        struct sockaddr_in client_address;
+        session_info session;
+        udp_set_session(socket_fd, port, &session, &client_address);
+
+        // set timeouts
+        set_timeout(socket_fd, MAX_WAIT, 0);
+
+        // receive data
+        uint64_t bytes_left = session.length;
+        uint64_t received_session_id;
+        uint8_t received_type;
+        struct sockaddr_in received_client_address;
+        socklen_t received_addr_len = sizeof(received_client_address);
+
+
+        int rcv_code = 0;
+        int retransmissions = 0;
+        while (bytes_left > 0)
+        {
+            do{
+                // we are sendind ACC package but not if it is the first package
+                if(rcv_code == -1 && session.packet_number > 0){
+                    send_acc_udp(socket_fd, session.session_id, session.packet_number, &client_address);
+                }
+                rcv_code = receive_datagram_udp(socket_fd, &received_client_address, buffer, BUFFER_SIZE,
+                                    &received_type, &received_session_id, &received_addr_len);
+                
+                // reading rest of the header
+                data_header *header = (data_header *) buffer;
+                header->packet_number = be64toh(header->packet_number);
+                header->length = be32toh(header->length);
+
+                // package is correct
+                if(     received_type == 4 
+                    && received_session_id == session.session_id
+                    && header->packet_number == session.packet_number){
+
+                    printf("received data: packet_number = %" PRIu64 ", length = %" PRIu32 "\n", 
+                            header->packet_number, header->length);
+
+                    // reading actual data from a package
+                    // print to std out
+                    for(uint32_t i = 0; i < header->length; i++){
+                        printf("%c", ((unsigned char *)buffer + sizeof(data_header))[i]);
+                    }
+                    bytes_left -= header->length;
+                    session.packet_number++;                
+
+                    // we send ACC package
+                    send_acc_udp(socket_fd, session.session_id, session.packet_number, &client_address);
+                }
+                // package asks for connection
+                else if(received_type == 1){
+                    send_conrjt_udp(socket_fd, received_session_id, &received_client_address);
+                }
+                // we are just ignoring other types of packages
+            }while (rcv_code == -1 && retransmissions < MAX_RETRANSMITS);
+
+            // we are terminating the connection if retransmissions limit is reached
+            if(rcv_code == -1){
+                break;
+            }
+            
+            retransmissions = 0;
+        }
+        send_rcvd_udp(socket_fd, session.session_id, &client_address);
+        
+        
+    }
+}
 
 int main(int argc, char *argv[]) {
     // argc = 3;
@@ -240,6 +313,9 @@ int main(int argc, char *argv[]) {
         protocol = 1;
     } else if(strcmp(argv[1], "udp") == 0){
         protocol = 2;
+    }
+    else if(strcmp(argv[1], "udpr") == 0){
+        protocol = 3;
     } else {
         fatal("protocol is 'tcp' or 'udp'");
     }
@@ -249,6 +325,9 @@ int main(int argc, char *argv[]) {
     }
     else if(protocol == 2){
         udp_protocol(port);
+    }
+    else if(protocol == 3){
+        udpr_protocol(port);
     }
     
     return 0;

@@ -34,7 +34,7 @@ struct __attribute__((__packed__)) data_header_t {
     // the data will be here
 };
 
-struct __attribute__((__packed__)) acc{ // accept data packet
+struct __attribute__((__packed__)) acc_t{ // accept data packet
     uint8_t type; // 5 for this packet
     uint64_t session_id;
     uint64_t packet_number;
@@ -62,7 +62,7 @@ typedef struct conn_t conn;
 typedef struct connacc_t connacc;
 typedef struct conrjt_t conrjt;
 typedef struct data_header_t data_header;
-typedef struct acc acc;
+typedef struct acc_t acc;
 typedef struct rjt_t rjt;
 typedef struct rcvd_t rcvd;
 typedef struct session_info_t session_info;
@@ -73,6 +73,9 @@ uint16_t read_port(char const *string);
 size_t   read_size(char const *string);
 ssize_t	readn(int fd, void *vptr, size_t n);
 ssize_t	writen(int fd, const void *vptr, size_t n);
+
+void set_timeout(int fd, int sec, int usec);
+int create_bind_udp(uint16_t port);
 
 int send_conn_tcp(int fd, uint64_t session_id, uint8_t protocol, uint64_t length);
 int send_connacc_tcp(int fd, uint64_t session_id);
@@ -88,6 +91,7 @@ int send_connacc_udp(int fd, uint64_t session_id, struct sockaddr_in *client_add
 int send_conrjt_udp(int fd, uint64_t session_id, struct sockaddr_in *client_address);
 int send_rjt_udp(int fd, uint64_t session_id, uint64_t packet_number, struct sockaddr_in *client_address);
 int send_rcvd_udp(int fd, uint64_t session_id, struct sockaddr_in *client_address);
+int send_acc_udp(int fd, uint64_t session_id, uint64_t packet_number, struct sockaddr_in *client_address);
 
 // this function only recognizes the type of the packet and the session_id so it DOES NOT CHANGE BYTES ORDER
 int receive_datagram_udp(int fd, struct sockaddr_in *client_address, void *buffer, ssize_t buff_len,
