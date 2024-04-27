@@ -96,6 +96,12 @@ ssize_t writen(int fd, const void *vptr, size_t n){
     return n;
 }
 
+int sessid_gen(){
+    int dummy;
+    ASSERT_SYS_OK(getrandom(&dummy, sizeof(dummy), 0));
+    return dummy;
+}
+
 void set_timeout(int fd, int sec, int usec) {
     struct timeval tv;
     tv.tv_sec = sec;
@@ -197,8 +203,8 @@ int receive_connacc_tcp(int fd, session_info *session_id){
 
 // UDP functions
 
-int send_conn_udp(int fd, uint64_t session_id, uint64_t length, struct sockaddr_in *client_address){
-    conn c = {1, session_id, 2, htobe64(length)};
+int send_conn_udp(int fd, uint64_t session_id, uint64_t length, struct sockaddr_in *client_address, int protocol_id){
+    conn c = {1, session_id, protocol_id, htobe64(length)};
     int flags = 0;
     ssize_t sent;
     sent = sendto(fd, &c, sizeof(c), flags, (struct sockaddr *) client_address, sizeof(*client_address));
@@ -269,11 +275,11 @@ int receive_datagram_udp(int fd, struct sockaddr_in *client_address,
     ssize_t received;
     int flags = 0;
     received = recvfrom(fd, buffer, buffer_len, flags, 
-                        (struct sockaddr *) client_address, addr_len);   
+                        (struct sockaddr *) client_address, addr_len);
     if(received < 0 && errno != EAGAIN && errno != EWOULDBLOCK){
         syserr("recvfrom");
     }
-    else if(received == 0){ // errno == EAGAIN || errno == EWOULDBLOCK this means timeout
+    else if(received == -1){ // errno == EAGAIN || errno == EWOULDBLOCK this means timeout
         return -1;
     }
     *type = ((uint8_t*) buffer)[0];

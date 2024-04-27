@@ -4,6 +4,7 @@
 #include <stddef.h>
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <sys/random.h>
 
 #define TCP 1
 #define UDP 2
@@ -74,6 +75,7 @@ size_t   read_size(char const *string);
 ssize_t	readn(int fd, void *vptr, size_t n);
 ssize_t	writen(int fd, const void *vptr, size_t n);
 
+int sessid_gen();
 void set_timeout(int fd, int sec, int usec);
 int create_bind_udp(uint16_t port);
 
@@ -86,7 +88,7 @@ int send_rcvd_tcp(int fd, uint64_t session_id);
 int receive_conn_tcp(int fd, session_info *info);
 int receive_connacc_tcp(int fd, session_info *session_id);
 
-int send_conn_udp(int fd, uint64_t session_id, uint64_t length, struct sockaddr_in *address);
+int send_conn_udp(int fd, uint64_t session_id, uint64_t length, struct sockaddr_in *address, int protocol_id);
 int send_connacc_udp(int fd, uint64_t session_id, struct sockaddr_in *client_address);
 int send_conrjt_udp(int fd, uint64_t session_id, struct sockaddr_in *client_address);
 int send_rjt_udp(int fd, uint64_t session_id, uint64_t packet_number, struct sockaddr_in *client_address);
