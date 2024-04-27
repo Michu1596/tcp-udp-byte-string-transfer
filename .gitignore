@@ -9,3 +9,10 @@ client
 cmake_install.cmake
 CMakeCache.txt
 .vscode
+*.o
+ppcbc
+ppcbs
+zera*
+fifo_server
+odp*
+client_out
